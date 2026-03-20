@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Organizador de Horarios</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app-layout">
+<aside class="sidebar">
+<div class="brand"><span>📅</span><div><h1>Organizador</h1><small>Horario universitario</small></div></div>
+<div class="card">
+<h2>Cargar oferta académica</h2>
+<input id="fileInput" type="file" accept="text/html" />
+<button id="loadExample">Subir archivo HTML</button>
+<p class="hint">Extrae Curso, Docente, Horario y Sección</p>
+</div>
+<div class="card">
+<h2>Agregar por bloques</h2>
+<label>Materia</label><select id="courseSelect"><option value="">-- primero carga archivo --</option></select>
+<label>Docente</label><select id="teacherSelect"><option value="">-- primero selecciona curso --</option></select>
+<label>Sección</label><select id="sectionSelect"><option value="">-- primero selecciona docente --</option></select>
+<div id="sectionTimes" class="hint">Selecciona sección para ver horarios.</div>
+<button id="addBlock">Agregar al horario</button>
+<button id="downloadImageBtn" class="ghost">Exportar imagen</button>
+<button id="downloadPdfBtn" class="ghost">Exportar PDF</button>
+<button id="clearBtn" class="danger">Limpiar horario</button>
+</div>
+</aside>
+<main class="main-content">
+<div class="header-main"><div><h1>Mi Horario</h1><span>Lunes a Sábado, 07:00 a 22:00</span></div></div>
+<div class="calendar-wrapper">
+<div id="calendarGrid" class="calendar-grid"></div>
+</div>
+<div class="card">
+<h2>Datos cargados</h2>
+<div id="tablePreview" class="table-preview"></div>
+</div>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha512-BNa5KT2Om7oFOJ677yRKPvIqwF38dK1+rLC0PZx0IAf63i3dN1E+GnoQIyM90vt+SR5KQaT4JkQq8Xh2Lcn9IA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-xg1z2Q4Z6WjSa7f6v9Yk7k+4F/ihz8r0Mg+YkFPueJ6oW4xG60Ejru7rCq4ykPoU2q0Cv4zICXOMFzxeOK2WZA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="script2.js"></script>
+</body>
+</html>
