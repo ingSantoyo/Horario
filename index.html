@@ -22,6 +22,9 @@
 <label>Docente</label><select id="teacherSelect"><option value="">-- primero selecciona curso --</option></select>
 <label>Sección</label><select id="sectionSelect"><option value="">-- primero selecciona docente --</option></select>
 <div id="sectionTimes" class="hint">Selecciona sección para ver horarios.</div>
+<label>Créditos</label>
+<input id="creditsInput" type="number" min="1" max="10" value="3" placeholder="Ej: 3" />
+<button id="addBlock">Agregar al horario</button>
 <button id="addBlock">Agregar al horario</button>
 <button id="downloadImageBtn" class="ghost">Exportar imagen</button>
 <button id="downloadPdfBtn" class="ghost">Exportar PDF</button>
@@ -32,6 +35,13 @@
 <div class="header-main"><div><h1>Mi Horario</h1><span>Lunes a Sábado, 07:00 a 22:00</span></div></div>
 <div class="calendar-wrapper">
 <div id="calendarGrid" class="calendar-grid"></div>
+</div>
+<div class="card">
+  <h2 style="display: flex; justify-content: space-between; align-items: center;">
+    Bloques Seleccionados 
+    <span id="totalCreditsBadge" style="background:#2563eb; color:#fff; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem;">0 crd</span>
+  </h2>
+  <div id="blocksList" style="max-height: 250px; overflow-y: auto; padding-right: 5px;"></div>
 </div>
 <div class="card">
 <h2>Datos cargados</h2>

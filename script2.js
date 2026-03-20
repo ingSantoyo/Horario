@@ -8,9 +8,9 @@ const addBlock = document.getElementById('addBlock');
 const schedule = document.getElementById('schedule');
 const tablePreview = document.getElementById('tablePreview');
 const downloadImageBtn = document.getElementById('downloadImageBtn');
-const downloadPdfBtn = document.getElementById('downloadPdfBtn');
 const clearBtn = document.getElementById('clearBtn');
 const calendarGrid = document.getElementById('calendarGrid');
+const blocksList = document.getElementById('blocksList');
 
 let loadedRows = [];
 let sectionMap = {};
@@ -114,9 +114,15 @@ function addBlockHandler() {
   if (!key) { alert('Selecciona sección.'); return; }
   const section = sectionMap[key];
   if (!section) { alert('Sección inválida.'); return; }
+  
+  // Capturamos el valor de los créditos (por defecto 0 si lo dejan vacío)
+  const creditosInput = document.getElementById('creditsInput');
+  const creditos = creditosInput ? (parseInt(creditosInput.value) || 0) : 0;
+
   section.horarios.forEach(h => {
       if (!scheduleBlocks.some(b => b.curso === section.curso && b.docente === section.docente && b.seccion === section.seccion && b.horario === h.horario && b.tipo === h.tipo && b.aula === h.aula)) {
-      scheduleBlocks.push({ curso: section.curso, docente: section.docente, seccion: section.seccion, horario: h.horario, tipo: h.tipo || 'otro', aula: h.aula || 'sin aula' });
+      // Guardamos también los créditos en el bloque
+      scheduleBlocks.push({ curso: section.curso, docente: section.docente, seccion: section.seccion, horario: h.horario, tipo: h.tipo || 'otro', aula: h.aula || 'sin aula', creditos: creditos });
     }
   });
   renderSchedule();
@@ -317,12 +323,52 @@ function renderCalendar() {
 
 function renderSchedule() {
   renderCalendar();
-  if (!schedule) return;
-  if (!scheduleBlocks.length) { schedule.innerHTML = '<p class="hint">Aún no hay bloques.</p>'; return; }
-  schedule.innerHTML = scheduleBlocks.map((b,i) => `<div class="block"><div><strong>${b.curso}</strong><br>${b.docente}<br>Sección: ${b.seccion}<br>${b.horario} (${b.tipo})</div><button data-i="${i}">X</button></div>`).join('');
-  schedule.querySelectorAll('button[data-i]').forEach(btn => btn.addEventListener('click', () => { scheduleBlocks.splice(Number(btn.dataset.i),1); renderSchedule(); renderCalendar(); }));
-}
+  
+  const blocksList = document.getElementById('blocksList');
+  const totalCreditsBadge = document.getElementById('totalCreditsBadge');
+  if (!blocksList) return;
 
+  if (!scheduleBlocks.length) { 
+    blocksList.innerHTML = '<p class="hint" style="color: #cbd5e1;">Aún no hay bloques seleccionados.</p>'; 
+    if (totalCreditsBadge) totalCreditsBadge.textContent = '0 crd';
+    return; 
+  }
+
+  const uniqueCourses = [];
+  const seen = new Set();
+  let totalCreditos = 0;
+  
+  scheduleBlocks.forEach(b => {
+    const key = `${b.curso}|${b.seccion}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueCourses.push({ curso: b.curso, seccion: b.seccion, creditos: b.creditos });
+      totalCreditos += (b.creditos || 0); // Sumamos al total general
+    }
+  });
+
+  // Actualizamos el contador en la pantalla
+  if (totalCreditsBadge) totalCreditsBadge.textContent = totalCreditos + ' crd';
+
+  blocksList.innerHTML = uniqueCourses.map((c) => 
+    `<div class="block">
+      <div style="font-size: 0.85rem; line-height: 1.3;">
+        <strong style="color: #60a5fa; font-size: 0.9rem;">${c.curso}</strong><br>
+        <span style="color: #cbd5e1;">Sección: ${c.seccion} | <span style="color:#fbbf24; font-weight:bold;">${c.creditos} crd</span></span>
+      </div>
+      <button data-curso="${c.curso}" data-seccion="${c.seccion}" style="margin-left: 10px;" title="Eliminar curso completo">X</button>
+    </div>`
+  ).join('');
+
+  blocksList.querySelectorAll('button[data-curso]').forEach(btn => {
+    btn.addEventListener('click', () => { 
+      const cursoEliminar = btn.dataset.curso;
+      const seccionEliminar = btn.dataset.seccion;
+      scheduleBlocks = scheduleBlocks.filter(b => !(b.curso === cursoEliminar && b.seccion === seccionEliminar)); 
+      renderSchedule(); 
+    });
+  });
+}
 function renderPreview() {
   if (!loadedRows.length) { tablePreview.innerHTML = '<p class="hint">No hay datos cargados.</p>'; return; }
   let html = '<table><tr><th>Curso</th><th>Docente</th><th>Sección</th><th>Horario</th></tr>';
