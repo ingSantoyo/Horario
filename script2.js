@@ -283,8 +283,10 @@ function renderCalendar() {
       const totalCols = columns.length || 1;
 
       groupEvents.forEach(event => {
-        const topPct = ((event.startMin - startHour*60) / totalMinutes) * 100;
-        const heightPct = ((event.endMin - event.startMin) / totalMinutes) * 100;
+        const rowHeight = 48;
+        const headerHeight = 48;
+        const topPx = headerHeight + ((event.startMin - startHour * 60) / 60) * rowHeight;
+        const heightPx = ((event.endMin - event.startMin) / 60) * rowHeight;
         const colWidth = dayWidth / totalCols;
         const leftPos = 110 + dayIndex * dayWidth + event.col * colWidth;
         const widthPx = colWidth - 4;
@@ -292,10 +294,10 @@ function renderCalendar() {
         const chip = document.createElement('div');
         chip.className = 'block-chip ' + (event.tipo === 'practica' ? 'practica' : event.tipo === 'otro' ? 'otro' : 'teoria');
         chip.style.position = 'absolute';
-        chip.style.top = `calc(${topPct}% + 48px)`;
+        chip.style.top = `${topPx}px`;
         chip.style.left = `${leftPos}px`;
         chip.style.width = `${widthPx}px`;
-        chip.style.height = `calc(${heightPct}% - 4px)`;
+        chip.style.height = `${Math.max(heightPx - 4, 18)}px`;
         chip.style.padding = '2px 4px';
         chip.style.fontSize = '0.65rem';
         chip.style.zIndex = '1';
