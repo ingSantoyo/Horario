@@ -17,7 +17,11 @@ const AUTH_CONFIG = {
   clientId: '19010579320-2ssnlh7g51q5m9nndksnihqje1rbjiol.apps.googleusercontent.com',
   allowedEmails: [
     'lexont01@gmail.com',
-    'alexandro.santoyo.b@uni.pe'
+    'alexandro.santoyo.b@uni.pe',
+    'lexont02@gmail.com',
+    'nayeli.robles.q@uni.pe',
+    'paola.ruiz.g@uni.pe',
+    'xalexito945@gmail.com'
   ],
   sessionHours: 24 // cuánto tiempo se recuerda la sesión en este navegador
 };
