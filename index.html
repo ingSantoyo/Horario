@@ -55,8 +55,6 @@
     <label>Sección</label>
     <select id="sectionSelect"><option value="">— primero selecciona un curso —</option></select>
     <div id="sectionTimes" class="hint">Selecciona una sección para ver sus horarios.</div>
-    <label>Créditos</label>
-    <input id="creditsInput" type="number" min="1" max="10" value="3" placeholder="Ej: 3" />
     <button id="addBlock">Agregar al horario</button>
     <div class="btn-row">
       <button id="downloadImageBtn" class="ghost">Imagen</button>
@@ -79,11 +77,8 @@
     <div id="calendarGrid" class="calendar-grid"></div>
   </div>
 
-  <div class="card">
-    <h2 class="card-title-row">
-      <span>Bloques seleccionados</span>
-      <span id="totalCreditsBadge" class="badge">0 crd</span>
-    </h2>
+  <div class="card card-matricula">
+    <h2>Bloques seleccionados</h2>
     <div id="blocksList" class="blocks-list"></div>
   </div>
 
@@ -97,6 +92,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha512-BNa5KT2Om7oFOJ677yRKPvIqwF38dK1+rLC0PZx0IAf63i3dN1E+GnoQIyM90vt+SR5KQaT4JkQq8Xh2Lcn9IA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-xg1z2Q4Z6WjSa7f6v9Yk7k+4F/ihz8r0Mg+YkFPueJ6oW4xG60Ejru7rCq4ykPoU2q0Cv4zICXOMFzxeOK2WZA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="auth.js"></script>
+<script src="catalog.js"></script>
 <script src="script2.js"></script>
 </body>
 </html>

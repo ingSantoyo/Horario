@@ -26,6 +26,7 @@ function parseHTMLTable(htmlText) {
   if (trs.length < 2) return [];
 
   const header = Array.from(trs[0].querySelectorAll('th,td')).map(c => c.textContent.trim().toLowerCase());
+  const idxCodigo = header.findIndex(h => /^cod|código|codigo/.test(h));
   const idxCurso = header.findIndex(h => /curso|materia|asignatura/.test(h));
   const idxDocente = header.findIndex(h => /docente|profesor|teacher/.test(h));
   const idxSeccion = header.findIndex(h => /secc|sección|seccion/.test(h));
@@ -38,6 +39,7 @@ function parseHTMLTable(htmlText) {
     const cells = Array.from(trs[i].querySelectorAll('th,td')).map(c => c.textContent.trim());
     if (!cells.length) continue;
 
+    const codigo = idxCodigo !== -1 ? (cells[idxCodigo] || '').trim() : '';
     const curso = idxCurso !== -1 ? (cells[idxCurso] || '') : (cells[2] || '');
     const docente = idxDocente !== -1 ? (cells[idxDocente] || '') : (cells[cells.length - 1] || '');
     const seccion = idxSeccion !== -1 ? (cells[idxSeccion] || '--') : (cells[1] || '--');
@@ -47,22 +49,43 @@ function parseHTMLTable(htmlText) {
     if (!tipo) {
       const lowerCells = cells.map(c => c.toLowerCase());
       if (lowerCells.some(c => c.includes('pract'))) tipo = 'practica';
+      else if (lowerCells.some(c => c.includes('lab'))) tipo = 'laboratorio';
       else if (lowerCells.some(c => c.includes('teor'))) tipo = 'teoria';
     }
     tipo = tipo.toLowerCase();
+    const tipoNorm = tipo.includes('pract') ? 'practica' : tipo.includes('lab') ? 'laboratorio' : tipo.includes('teor') ? 'teoria' : 'otro';
 
     if (!curso || !docente || !horario) continue;
-    rows.push({ curso: curso.trim(), docente: docente.trim(), seccion: seccion.trim(), horario: horario.trim(), tipo: tipo.includes('pract') ? 'practica' : tipo.includes('teor') ? 'teoria' : 'otro', aula: aula || 'sin aula' });
+    rows.push({ codigo: codigo.trim(), curso: curso.trim(), docente: docente.trim(), seccion: seccion.trim(), horario: horario.trim(), tipo: tipoNorm, aula: aula || 'sin aula' });
   }
 
   return rows;
+}
+
+// Busca los créditos y el ciclo de un curso en el catálogo, primero por código y
+// si no lo encuentra, por coincidencia de nombre (ignorando tildes/mayúsculas).
+function lookupCourseInfo(codigo, curso) {
+  if (codigo && typeof COURSE_CATALOG !== 'undefined' && COURSE_CATALOG[codigo]) {
+    const c = COURSE_CATALOG[codigo];
+    return { creditos: c.creditos, ciclo: c.ciclo };
+  }
+  if (typeof COURSE_CATALOG !== 'undefined' && curso) {
+    const normalize = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+    const target = normalize(curso);
+    for (const code in COURSE_CATALOG) {
+      if (normalize(COURSE_CATALOG[code].nombre) === target) {
+        return { creditos: COURSE_CATALOG[code].creditos, ciclo: COURSE_CATALOG[code].ciclo };
+      }
+    }
+  }
+  return { creditos: null, ciclo: null };
 }
 
 function buildSectionMap(rows) {
   sectionMap = {};
   rows.forEach(r => {
     const key = `${r.curso}||${r.seccion}`;
-    if (!sectionMap[key]) sectionMap[key] = { curso: r.curso, seccion: r.seccion, docentes: [], horarios: [] };
+    if (!sectionMap[key]) sectionMap[key] = { curso: r.curso, codigo: r.codigo, seccion: r.seccion, docentes: [], horarios: [] };
     if (!sectionMap[key].docentes.includes(r.docente)) sectionMap[key].docentes.push(r.docente);
     const exists = sectionMap[key].horarios.some(h => h.horario === r.horario && h.tipo === r.tipo && h.aula === r.aula && h.docente === r.docente);
     if (!exists) sectionMap[key].horarios.push({ horario: r.horario, tipo: r.tipo, aula: r.aula, docente: r.docente });
@@ -99,7 +122,11 @@ function showSectionHorario() {
   if (!key) { sectionTimes.textContent = 'Selecciona sección.'; return; }
   const section = sectionMap[key];
   if (!section) { sectionTimes.textContent = 'Sección inválida.'; return; }
-  sectionTimes.textContent = 'Horarios: ' + section.horarios.map(h => `${h.horario} (${h.tipo}) [${h.aula}] - ${h.docente}`).join(' | ');
+  const info = lookupCourseInfo(section.codigo, section.curso);
+  const creditosLabel = info.creditos !== null ? `${info.creditos} créditos` : 'créditos no encontrados en el catálogo';
+  const cicloLabel = info.ciclo ? ` · Ciclo ${info.ciclo}` : '';
+  const horariosLabel = section.horarios.map(h => `${h.horario} (${h.tipo}) [${h.aula}] - ${h.docente}`).join(' | ');
+  sectionTimes.textContent = `${creditosLabel}${cicloLabel} — ${horariosLabel}`;
 }
 
 function addBlockHandler() {
@@ -107,15 +134,18 @@ function addBlockHandler() {
   if (!key) { alert('Selecciona sección.'); return; }
   const section = sectionMap[key];
   if (!section) { alert('Sección inválida.'); return; }
-  
-  // Capturamos el valor de los créditos (por defecto 0 si lo dejan vacío)
-  const creditosInput = document.getElementById('creditsInput');
-  const creditos = creditosInput ? (parseInt(creditosInput.value) || 0) : 0;
+
+  // Obtenemos créditos y ciclo automáticamente del catálogo de la malla curricular
+  const info = lookupCourseInfo(section.codigo, section.curso);
+  if (info.creditos === null) {
+    console.warn(`No se encontraron créditos en el catálogo para "${section.curso}" (${section.codigo || 'sin código'}). Se guardó con 0 créditos.`);
+  }
+  const creditos = info.creditos ?? 0;
+  const ciclo = info.ciclo ?? null;
 
   section.horarios.forEach(h => {
       if (!scheduleBlocks.some(b => b.curso === section.curso && b.docente === h.docente && b.seccion === section.seccion && b.horario === h.horario && b.tipo === h.tipo && b.aula === h.aula)) {
-      // Guardamos también los créditos en el bloque
-      scheduleBlocks.push({ curso: section.curso, docente: h.docente, seccion: section.seccion, horario: h.horario, tipo: h.tipo || 'otro', aula: h.aula || 'sin aula', creditos: creditos });
+      scheduleBlocks.push({ codigo: section.codigo || '', curso: section.curso, docente: h.docente, seccion: section.seccion, horario: h.horario, tipo: h.tipo || 'otro', aula: h.aula || 'sin aula', creditos: creditos, ciclo: ciclo });
     }
   });
   renderSchedule();
@@ -314,51 +344,81 @@ function renderCalendar() {
 
 function renderSchedule() {
   renderCalendar();
-  
+
   const blocksList = document.getElementById('blocksList');
-  const totalCreditsBadge = document.getElementById('totalCreditsBadge');
   if (!blocksList) return;
 
-  if (!scheduleBlocks.length) { 
-    blocksList.innerHTML = '<p class="hint">Aún no hay bloques seleccionados.</p>'; 
-    if (totalCreditsBadge) totalCreditsBadge.textContent = '0 crd';
-    return; 
+  if (!scheduleBlocks.length) {
+    blocksList.innerHTML = '<p class="hint">Aún no hay bloques seleccionados.</p>';
+    return;
   }
 
   const uniqueCourses = [];
   const seen = new Set();
-  let totalCreditos = 0;
 
   scheduleBlocks.forEach(b => {
     const key = `${b.curso}|${b.seccion}`;
     if (!seen.has(key)) {
       seen.add(key);
-      const docentes = [...new Set(scheduleBlocks.filter(x => x.curso === b.curso && x.seccion === b.seccion).map(x => x.docente).filter(Boolean))];
-      uniqueCourses.push({ curso: b.curso, seccion: b.seccion, creditos: b.creditos, docentes });
-      totalCreditos += (b.creditos || 0); // Sumamos al total general
+      const relacionados = scheduleBlocks.filter(x => x.curso === b.curso && x.seccion === b.seccion);
+      uniqueCourses.push({
+        codigo: b.codigo || '—',
+        curso: b.curso,
+        seccion: b.seccion,
+        creditos: b.creditos || 0,
+        ciclo: b.ciclo,
+        horarios: relacionados.map(x => ({ horario: x.horario, aula: x.aula, tipo: x.tipo, docente: x.docente }))
+      });
     }
   });
 
-  // Actualizamos el contador en la pantalla
-  if (totalCreditsBadge) totalCreditsBadge.textContent = totalCreditos + ' crd';
+  const totalCursos = uniqueCourses.length;
+  const totalCreditos = uniqueCourses.reduce((sum, c) => sum + (c.creditos || 0), 0);
+  const tipoLabel = { teoria: 'TEORÍA', practica: 'PRÁCTICA', laboratorio: 'LABORATORIO', otro: 'OTRO' };
 
-  blocksList.innerHTML = uniqueCourses.map((c) => 
-    `<div class="block">
-      <div class="block-info">
-        <div class="block-course">${c.curso}</div>
-        <div class="block-meta">Sección ${c.seccion} · <span class="block-credits">${c.creditos} crd</span></div>
-        <div class="block-prof">${c.docentes.join(' / ')}</div>
-      </div>
-      <button data-curso="${c.curso}" data-seccion="${c.seccion}" title="Eliminar curso completo">✕</button>
-    </div>`
-  ).join('');
+  let html = '<div class="matricula-wrapper"><table class="matricula-table"><thead><tr>' +
+    '<th>N°</th><th>Código</th><th>Curso</th><th>Sección</th><th>Cred</th><th>Ciclo</th><th>Horario</th><th></th>' +
+    '</tr></thead><tbody>';
 
-  blocksList.querySelectorAll('button[data-curso]').forEach(btn => {
-    btn.addEventListener('click', () => { 
+  uniqueCourses.forEach((c, i) => {
+    const cursoAttr = c.curso.replace(/"/g, '&quot;');
+    const seccionAttr = c.seccion.replace(/"/g, '&quot;');
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td class="col-mono">${c.codigo || '—'}</td>
+      <td class="col-curso">${c.curso}</td>
+      <td>${c.seccion}</td>
+      <td class="col-mono">${c.creditos}</td>
+      <td class="col-mono">${c.ciclo || '—'}</td>
+      <td>
+        <div class="horario-cell">
+          ${c.horarios.map(h => `
+            <div class="horario-line">
+              <span class="pill pill-day">${h.horario}</span>
+              <span class="pill pill-room">${h.aula}</span>
+              <span class="pill pill-tipo pill-${h.tipo}">${tipoLabel[h.tipo] || 'OTRO'}</span>
+              <span class="horario-docente">${h.docente}</span>
+            </div>`).join('')}
+        </div>
+      </td>
+      <td><button class="row-remove" data-curso="${cursoAttr}" data-seccion="${seccionAttr}" title="Eliminar curso">✕</button></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  html += `<div class="matricula-summary">
+    <div class="summary-row"><span class="summary-label">Total cursos matriculados</span><span class="pill pill-count">${totalCursos}</span></div>
+    <div class="summary-row"><span class="summary-label">Total créditos matriculados</span><span class="pill pill-credits">${totalCreditos}</span></div>
+  </div></div>`;
+
+  blocksList.innerHTML = html;
+
+  blocksList.querySelectorAll('button.row-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
       const cursoEliminar = btn.dataset.curso;
       const seccionEliminar = btn.dataset.seccion;
-      scheduleBlocks = scheduleBlocks.filter(b => !(b.curso === cursoEliminar && b.seccion === seccionEliminar)); 
-      renderSchedule(); 
+      scheduleBlocks = scheduleBlocks.filter(b => !(b.curso === cursoEliminar && b.seccion === seccionEliminar));
+      renderSchedule();
     });
   });
 }

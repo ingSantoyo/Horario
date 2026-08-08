@@ -350,26 +350,55 @@ button.danger:hover{background:rgba(156,68,54,.18);}
   border:1px solid var(--gold-dim);
 }
 
-.blocks-list{max-height:280px;overflow-y:auto;padding-right:4px;display:flex;flex-direction:column;gap:.5rem;}
+.blocks-list{max-height:none;overflow:visible;}
 .blocks-list .hint{color:var(--muted);}
 
-.block{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:.6rem .8rem;
-  border-radius:var(--radius);
-  background:var(--surface-soft);
-  border:1px solid var(--border);
-  border-left:3px solid var(--navy);
+/* ============ TABLA "RESUMEN DE MATRÍCULA" ============ */
+.matricula-wrapper{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+.matricula-table{width:100%;border-collapse:collapse;font-size:.78rem;}
+.matricula-table thead th{
+  font-family:var(--font-mono);
+  font-size:.66rem;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  background:var(--navy);
+  color:var(--gold-soft);
+  padding:.55rem .6rem;
+  text-align:left;
+  border-bottom:2px solid var(--gold-dim);
+  white-space:nowrap;
 }
-.block-info{font-size:.85rem;line-height:1.4;}
-.block-info .block-course{font-family:var(--font-display);font-weight:600;color:var(--navy);font-size:.92rem;}
-.block-info .block-meta{color:var(--muted);font-size:.78rem;}
-.block-info .block-meta .block-credits{color:var(--gold-dim);font-weight:700;}
-.block-info .block-prof{color:var(--muted);font-size:.76rem;font-style:italic;margin-top:.1rem;}
+.matricula-table tbody tr{border-bottom:1px solid var(--border);}
+.matricula-table tbody tr:nth-child(even){background:var(--surface-soft);}
+.matricula-table tbody tr:hover{background:#f1ead6;}
+.matricula-table td{padding:.6rem .6rem;vertical-align:top;color:var(--ink);}
+.matricula-table td.col-mono{font-family:var(--font-mono);font-size:.76rem;color:var(--navy);white-space:nowrap;}
+.matricula-table td.col-curso{font-family:var(--font-display);font-weight:600;color:var(--navy);min-width:150px;}
 
-.block button{
+.horario-cell{display:flex;flex-direction:column;gap:.3rem;}
+.horario-line{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem;}
+.horario-docente{font-size:.72rem;color:var(--muted);font-style:italic;white-space:nowrap;}
+
+.pill{
+  display:inline-block;
+  font-family:var(--font-mono);
+  font-size:.65rem;
+  font-weight:600;
+  letter-spacing:.02em;
+  padding:.14rem .45rem;
+  border-radius:20px;
+  white-space:nowrap;
+  color:#fff;
+}
+.pill-day{background:#4f7a52;}
+.pill-room{background:#3a5a91;}
+.pill-tipo{color:#fff;}
+.pill-tipo.pill-teoria{background:var(--teoria);}
+.pill-tipo.pill-practica{background:var(--practica);}
+.pill-tipo.pill-laboratorio{background:#7a5b1e;}
+.pill-tipo.pill-otro{background:var(--otro);}
+
+.row-remove{
   background:transparent;
   border:1px solid rgba(156,68,54,.4);
   border-radius:var(--radius-sm);
@@ -378,11 +407,34 @@ button.danger:hover{background:rgba(156,68,54,.18);}
   color:var(--danger);
   font-size:.7rem;
   cursor:pointer;
-  flex-shrink:0;
-  margin-left:.7rem;
   transition:background .15s ease;
 }
-.block button:hover{background:rgba(156,68,54,.12);}
+.row-remove:hover{background:rgba(156,68,54,.12);}
+
+.matricula-summary{
+  display:flex;
+  flex-direction:column;
+  gap:0;
+  border-top:2px solid var(--border-strong);
+  background:var(--surface-soft);
+}
+.summary-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:.5rem .8rem;
+  border-bottom:1px solid var(--border);
+  font-size:.8rem;
+}
+.summary-row:last-child{border-bottom:none;}
+.summary-label{font-weight:600;color:var(--navy);}
+.pill-count{background:#4f7a52;font-family:var(--font-mono);font-size:.72rem;}
+.pill-credits{background:var(--gold-dim);color:#241708;font-family:var(--font-mono);font-size:.72rem;}
+
+@media (max-width:1000px){
+  .matricula-wrapper{overflow-x:auto;}
+  .matricula-table{min-width:640px;}
+}
 
 .table-preview{
   font-size:.8rem;
