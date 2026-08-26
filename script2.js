@@ -1,5 +1,6 @@
 const fileInput = document.getElementById('fileInput');
 const loadExample = document.getElementById('loadExample');
+const especialidadSelect = document.getElementById('especialidadSelect');
 const courseSelect = document.getElementById('courseSelect');
 const sectionSelect = document.getElementById('sectionSelect');
 const sectionTimes = document.getElementById('sectionTimes');
@@ -15,55 +16,242 @@ const blocksList = document.getElementById('blocksList');
 let loadedRows = [];
 let sectionMap = {};
 let scheduleBlocks = [];
+let lastWorkbook = null; // último Excel leído, para poder re-parsear si cambian de especialidad sin re-subir el archivo
 
-function parseHTMLTable(htmlText) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlText, 'text/html');
-  const table = doc.querySelector('table');
-  if (!table) return [];
+/* ============================================================
+   LECTURA DE EXCEL (HORARIOS_XX-X.xlsx)
+   ------------------------------------------------------------
+   El archivo tiene 3 hojas fijas: "s1", "s2" y "s3" (una por
+   especialidad), y cada una usa un formato de columnas distinto.
+   Aquí "desunimos" las celdas combinadas (para que cada fila
+   tenga todos sus datos) y extraemos curso/sección/docente/
+   horario/créditos/ciclo con un parser específico por hoja.
+   ============================================================ */
 
-  const trs = Array.from(table.querySelectorAll('tr'));
-  if (trs.length < 2) return [];
-
-  const header = Array.from(trs[0].querySelectorAll('th,td')).map(c => c.textContent.trim().toLowerCase());
-  const idxCodigo = header.findIndex(h => /^cod|código|codigo/.test(h));
-  const idxCurso = header.findIndex(h => /curso|materia|asignatura/.test(h));
-  const idxDocente = header.findIndex(h => /docente|profesor|teacher/.test(h));
-  const idxSeccion = header.findIndex(h => /secc|sección|seccion/.test(h));
-  const idxHorario = header.findIndex(h => /horario|hora/.test(h));
-  const idxTipo = header.findIndex(h => /tipo|teoria|practica|práctica/.test(h));
-  const idxAula = header.findIndex(h => /aula|salon|sala|ambiente/.test(h));
-
-  const rows = [];
-  for (let i = 1; i < trs.length; i++) {
-    const cells = Array.from(trs[i].querySelectorAll('th,td')).map(c => c.textContent.trim());
-    if (!cells.length) continue;
-
-    const codigo = idxCodigo !== -1 ? (cells[idxCodigo] || '').trim() : '';
-    const curso = idxCurso !== -1 ? (cells[idxCurso] || '') : (cells[2] || '');
-    const docente = idxDocente !== -1 ? (cells[idxDocente] || '') : (cells[cells.length - 1] || '');
-    const seccion = idxSeccion !== -1 ? (cells[idxSeccion] || '--') : (cells[1] || '--');
-    const horario = idxHorario !== -1 ? (cells[idxHorario] || '') : (cells[4] || cells[3] || '');
-    const aula = idxAula !== -1 ? (cells[idxAula] || '').trim() : '';
-    let tipo = idxTipo !== -1 ? (cells[idxTipo] || '').toLowerCase() : '';
-    if (!tipo) {
-      const lowerCells = cells.map(c => c.toLowerCase());
-      if (lowerCells.some(c => c.includes('pract'))) tipo = 'practica';
-      else if (lowerCells.some(c => c.includes('lab'))) tipo = 'laboratorio';
-      else if (lowerCells.some(c => c.includes('teor'))) tipo = 'teoria';
-    }
-    tipo = tipo.toLowerCase();
-    const tipoNorm = tipo.includes('pract') ? 'practica' : tipo.includes('lab') ? 'laboratorio' : tipo.includes('teor') ? 'teoria' : 'otro';
-
-    if (!curso || !docente || !horario) continue;
-    rows.push({ codigo: codigo.trim(), curso: curso.trim(), docente: docente.trim(), seccion: seccion.trim(), horario: horario.trim(), tipo: tipoNorm, aula: aula || 'sin aula' });
+function romanToInt(str) {
+  const map = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+  const s = (str || '').toUpperCase();
+  let total = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cur = map[s[i]] || 0;
+    const next = map[s[i + 1]] || 0;
+    total += cur < next ? -cur : cur;
   }
-
-  return rows;
+  return total || null;
 }
 
-// Busca los créditos y el ciclo de un curso en el catálogo, primero por código y
-// si no lo encuentra, por coincidencia de nombre (ignorando tildes/mayúsculas).
+// Detecta filas que marcan el inicio de un bloque ("I CICLO", "ELECTIVOS DE ESPECIALIDAD", etc.)
+function detectBlockMarker(text) {
+  if (!text) return undefined;
+  const t = text.toUpperCase();
+  const roman = t.match(/^([IVXLC]+)\s*CICLO\b/);
+  if (roman) return romanToInt(roman[1]);
+  if (t.includes('ELECTIV')) return 'ELECTIVO';
+  return undefined;
+}
+
+function formatCiclo(ciclo) {
+  if (ciclo === 'ELECTIVO' || ciclo === 11) return 'Electivo';
+  if (typeof ciclo === 'number') return String(ciclo);
+  return '—';
+}
+
+// Convierte "T"/"P"/"L" (o texto completo) a nuestro tipo normalizado
+function normalizeTipoClase(clase) {
+  const c = (clase || '').trim().toUpperCase();
+  if (c.startsWith('P')) return 'practica';
+  if (c.startsWith('L')) return 'laboratorio';
+  if (c.startsWith('T')) return 'teoria';
+  return 'otro';
+}
+
+// Extrae todas las parejas día/hora de una celda que puede traer varias
+// juntas, con o sin dos puntos: "LU: 10-12   JU: 10-12", "SA 08-10", etc.
+function parseHorasCell(cell) {
+  if (!cell) return [];
+  const re = /([A-ZÁÉÍÓÚÑ]{2,4})\s*:?\s*(\d{1,2})\s*-\s*(\d{1,2})/gi;
+  const out = [];
+  let m;
+  while ((m = re.exec(cell)) !== null) {
+    out.push({ dia: m[1].toUpperCase(), horaIni: m[2], horaFin: m[3] });
+  }
+  return out;
+}
+
+function limpiarTexto(v) {
+  if (v === undefined || v === null) return '';
+  return String(v).replace(/\s+/g, ' ').trim();
+}
+
+function dedupeRows(rows) {
+  const seen = new Set();
+  const out = [];
+  rows.forEach(r => {
+    const key = [r.codigo, r.curso, r.docente, r.seccion, r.horario, r.tipo].join('|');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(r);
+  });
+  return out;
+}
+
+// Rellena las celdas combinadas con el valor de su celda superior-izquierda,
+// para que cada fila tenga toda su información aunque en el Excel esté fusionada.
+function unmergeFillSheet(ws) {
+  const merges = ws['!merges'] || [];
+  merges.forEach(range => {
+    const topAddr = XLSX.utils.encode_cell({ r: range.s.r, c: range.s.c });
+    const topCell = ws[topAddr];
+    if (!topCell) return;
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (addr === topAddr) continue;
+        ws[addr] = { ...topCell };
+      }
+    }
+  });
+}
+
+function sheetToRows(ws) {
+  unmergeFillSheet(ws);
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+}
+
+// ---- Hoja "s1": Ingeniería Sanitaria ----
+// COD.CURSO | SECC. | CURSO | CRED. | PRE-REQ. | ESPEC | CICLO | CLASE | DOCENTE | DIA | HORA
+function parseSheetS1(rows) {
+  const out = [];
+  let cicloActual = null;
+  let headerSeen = false;
+  rows.forEach(row => {
+    const cells = Array.from({ length: 11 }, (_, i) => limpiarTexto(row[i]));
+    const joined = cells.join('');
+    const marker = detectBlockMarker(cells[0]);
+    if (marker !== undefined) { cicloActual = marker; headerSeen = false; return; }
+    if (/^COD/i.test(cells[0])) { headerSeen = true; return; }
+    if (!joined || !headerSeen) return;
+
+    const [codigo, seccion, curso, cred, , , cicloCell, clase, docente, dia, hora] = cells;
+    if (!codigo || !curso || !docente || !dia || !hora) return;
+
+    const cicloNum = cicloCell ? (Number(cicloCell) || cicloActual) : cicloActual;
+    const credNum = cred ? Number(cred) : null;
+
+    out.push({
+      codigo: codigo.replace(/-/g, '').toUpperCase(),
+      curso: curso.toUpperCase(),
+      docente,
+      seccion,
+      horario: `${dia} ${hora}`,
+      tipo: normalizeTipoClase(clase),
+      aula: 'sin aula',
+      creditosDirectos: credNum,
+      cicloDirecto: cicloNum
+    });
+  });
+  return dedupeRows(out);
+}
+
+// ---- Hoja "s2": Higiene y Seguridad Industrial ----
+// COD CUR | Sec. | CRED. | PRE-REQ. | CURSO | DOCENTE | HORA DE TEORIA | HORA DE PRACTICA
+function parseSheetS2(rows) {
+  const out = [];
+  let cicloActual = null;
+  let headerSeen = false;
+  rows.forEach(row => {
+    const cells = Array.from({ length: 9 }, (_, i) => limpiarTexto(row[i]));
+    const joined = cells.join('');
+    const marker = detectBlockMarker(cells[0]);
+    if (marker !== undefined) { cicloActual = marker; headerSeen = false; return; }
+    if (/^COD/i.test(cells[0])) { headerSeen = true; return; }
+    if (!joined || !headerSeen) return;
+
+    const [codigo, seccion, cred, , curso, docente, horaTeo, horaPrac] = cells;
+    if (!codigo || !curso || !docente) return;
+    const credNum = cred ? Number(cred) : null;
+
+    parseHorasCell(horaTeo).forEach(s => out.push({
+      codigo: codigo.replace(/-/g, '').toUpperCase(), curso: curso.toUpperCase(), docente, seccion,
+      horario: `${s.dia} ${s.horaIni}-${s.horaFin}`, tipo: 'teoria', aula: 'sin aula',
+      creditosDirectos: credNum, cicloDirecto: cicloActual
+    }));
+    parseHorasCell(horaPrac).forEach(s => out.push({
+      codigo: codigo.replace(/-/g, '').toUpperCase(), curso: curso.toUpperCase(), docente, seccion,
+      horario: `${s.dia} ${s.horaIni}-${s.horaFin}`, tipo: 'practica', aula: 'sin aula',
+      creditosDirectos: credNum, cicloDirecto: cicloActual
+    }));
+  });
+  return dedupeRows(out);
+}
+
+// ---- Hoja "s3": Ingeniería Ambiental ----
+// COD.CUR. | Sec. | CURSO | DOCENTE | HORA DE TEORIA | HORA DE PRÁCTICA (sin créditos en el archivo)
+function parseSheetS3(rows) {
+  const out = [];
+  let cicloActual = null;
+  let headerSeen = false;
+  rows.forEach(row => {
+    const cells = Array.from({ length: 6 }, (_, i) => limpiarTexto(row[i]));
+    const joined = cells.join('');
+    const marker = detectBlockMarker(cells[0]);
+    if (marker !== undefined) { cicloActual = marker; headerSeen = false; return; }
+    if (/^COD/i.test(cells[0])) { headerSeen = true; return; }
+    if (!joined || !headerSeen) return;
+
+    const [codigo, seccion, curso, docente, horaTeo, horaPrac] = cells;
+    if (!codigo || !curso || !docente) return;
+
+    parseHorasCell(horaTeo).forEach(s => out.push({
+      codigo: codigo.replace(/-/g, '').toUpperCase(), curso: curso.toUpperCase(), docente, seccion,
+      horario: `${s.dia} ${s.horaIni}-${s.horaFin}`, tipo: 'teoria', aula: 'sin aula',
+      creditosDirectos: null, cicloDirecto: cicloActual
+    }));
+    parseHorasCell(horaPrac).forEach(s => out.push({
+      codigo: codigo.replace(/-/g, '').toUpperCase(), curso: curso.toUpperCase(), docente, seccion,
+      horario: `${s.dia} ${s.horaIni}-${s.horaFin}`, tipo: 'practica', aula: 'sin aula',
+      creditosDirectos: null, cicloDirecto: cicloActual
+    }));
+  });
+  return dedupeRows(out);
+}
+
+function parseWorkbookForEspecialidad(workbook, especialidad) {
+  const sheetName = workbook.SheetNames.find(n => n.toLowerCase().trim() === especialidad) || workbook.SheetNames[0];
+  const ws = workbook.Sheets[sheetName];
+  if (!ws) return [];
+  const rows = sheetToRows(ws);
+  if (especialidad === 's2') return parseSheetS2(rows);
+  if (especialidad === 's3') return parseSheetS3(rows);
+  return parseSheetS1(rows);
+}
+
+function loadFromWorkbook() {
+  if (!lastWorkbook) return;
+  const especialidad = (especialidadSelect && especialidadSelect.value) || 's1';
+  const parsed = parseWorkbookForEspecialidad(lastWorkbook, especialidad);
+  if (!parsed.length) {
+    alert('No se pudo leer información de la hoja "' + especialidad.toUpperCase() + '" en ese archivo. Revisa que el Excel tenga el mismo formato de HORARIOS_XX-X.xlsx.');
+    return;
+  }
+  loadedRows = parsed;
+  buildSectionMap(loadedRows);
+  updateCourseSelect();
+  renderPreview();
+  scheduleBlocks = [];
+  renderSchedule();
+  renderCalendar();
+  persistAutosave();
+}
+
+async function handleExcelFile(file) {
+  const buffer = await file.arrayBuffer();
+  lastWorkbook = XLSX.read(buffer, { type: 'array' });
+  loadFromWorkbook();
+}
+
+// Busca los créditos y el ciclo de un curso en el catálogo de la malla curricular,
+// primero por código y si no lo encuentra, por coincidencia de nombre.
 function lookupCourseInfo(codigo, curso) {
   if (codigo && typeof COURSE_CATALOG !== 'undefined' && COURSE_CATALOG[codigo]) {
     const c = COURSE_CATALOG[codigo];
@@ -85,10 +273,18 @@ function buildSectionMap(rows) {
   sectionMap = {};
   rows.forEach(r => {
     const key = `${r.curso}||${r.seccion}`;
-    if (!sectionMap[key]) sectionMap[key] = { curso: r.curso, codigo: r.codigo, seccion: r.seccion, docentes: [], horarios: [] };
+    if (!sectionMap[key]) {
+      sectionMap[key] = {
+        curso: r.curso, codigo: r.codigo, seccion: r.seccion, docentes: [], horarios: [],
+        creditosDirectos: (r.creditosDirectos !== undefined ? r.creditosDirectos : null),
+        cicloDirecto: (r.cicloDirecto !== undefined ? r.cicloDirecto : null)
+      };
+    }
     if (!sectionMap[key].docentes.includes(r.docente)) sectionMap[key].docentes.push(r.docente);
     const exists = sectionMap[key].horarios.some(h => h.horario === r.horario && h.tipo === r.tipo && h.aula === r.aula && h.docente === r.docente);
     if (!exists) sectionMap[key].horarios.push({ horario: r.horario, tipo: r.tipo, aula: r.aula, docente: r.docente });
+    if (sectionMap[key].creditosDirectos === null && r.creditosDirectos != null) sectionMap[key].creditosDirectos = r.creditosDirectos;
+    if (sectionMap[key].cicloDirecto === null && r.cicloDirecto != null) sectionMap[key].cicloDirecto = r.cicloDirecto;
   });
 }
 
@@ -117,14 +313,21 @@ function updateSectionSelect() {
   sectionTimes.textContent = 'Selecciona sección.';
 }
 
+function getSectionInfo(section) {
+  if (section.creditosDirectos !== null && section.creditosDirectos !== undefined) {
+    return { creditos: section.creditosDirectos, ciclo: section.cicloDirecto };
+  }
+  return lookupCourseInfo(section.codigo, section.curso);
+}
+
 function showSectionHorario() {
   const key = sectionSelect.value;
   if (!key) { sectionTimes.textContent = 'Selecciona sección.'; return; }
   const section = sectionMap[key];
   if (!section) { sectionTimes.textContent = 'Sección inválida.'; return; }
-  const info = lookupCourseInfo(section.codigo, section.curso);
-  const creditosLabel = info.creditos !== null ? `${info.creditos} créditos` : 'créditos no encontrados en el catálogo';
-  const cicloLabel = info.ciclo ? ` · Ciclo ${info.ciclo}` : '';
+  const info = getSectionInfo(section);
+  const creditosLabel = info.creditos !== null && info.creditos !== undefined ? `${info.creditos} créditos` : 'créditos no encontrados';
+  const cicloLabel = info.ciclo ? ` · Ciclo ${formatCiclo(info.ciclo)}` : '';
   const horariosLabel = section.horarios.map(h => `${h.horario} (${h.tipo}) [${h.aula}] - ${h.docente}`).join(' | ');
   sectionTimes.textContent = `${creditosLabel}${cicloLabel} — ${horariosLabel}`;
 }
@@ -135,10 +338,9 @@ function addBlockHandler() {
   const section = sectionMap[key];
   if (!section) { alert('Sección inválida.'); return; }
 
-  // Obtenemos créditos y ciclo automáticamente del catálogo de la malla curricular
-  const info = lookupCourseInfo(section.codigo, section.curso);
-  if (info.creditos === null) {
-    console.warn(`No se encontraron créditos en el catálogo para "${section.curso}" (${section.codigo || 'sin código'}). Se guardó con 0 créditos.`);
+  const info = getSectionInfo(section);
+  if (info.creditos === null || info.creditos === undefined) {
+    console.warn(`No se encontraron créditos para "${section.curso}" (${section.codigo || 'sin código'}). Se guardó con 0 créditos.`);
   }
   const creditos = info.creditos ?? 0;
   const ciclo = info.ciclo ?? null;
@@ -179,19 +381,59 @@ async function ensureJsPDF() {
   });
 }
 
+async function buildExportContainer() {
+  const EXPORT_WIDTH = 1400;
+
+  const container = document.createElement('div');
+  container.className = 'export-root';
+  container.style.position = 'fixed';
+  container.style.top = '0';
+  container.style.left = '-10000px';
+  container.style.width = EXPORT_WIDTH + 'px';
+  container.style.background = '#fdfaf0';
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'export-title-row';
+  const blocksTitle = document.querySelector('.card-matricula h2');
+  const blocksTitleText = blocksTitle ? blocksTitle.textContent : 'Bloques seleccionados';
+  titleWrap.innerHTML = `
+    <img src="UNI-logo.png" alt="" class="export-logo" />
+    <div>
+      <h2>Universidad Nacional de Ingeniería</h2>
+      <span>Mi Horario · Lunes a Sábado, 07:00 – 22:00</span>
+    </div>`;
+  container.appendChild(titleWrap);
+
+  const calWrapper = document.createElement('div');
+  calWrapper.className = 'calendar-wrapper export-calendar-wrapper';
+  const calGrid = document.createElement('div');
+  calGrid.className = 'calendar-grid';
+  calWrapper.appendChild(calGrid);
+  container.appendChild(calWrapper);
+
+  const blocksCard = document.createElement('div');
+  blocksCard.className = 'card export-blocks-card';
+  blocksCard.innerHTML = `<h2>${blocksTitleText}</h2><div>${blocksList.innerHTML}</div>`;
+  container.appendChild(blocksCard);
+
+  document.body.appendChild(container);
+  renderCalendarInto(calGrid, EXPORT_WIDTH); // ancho fijo -> siempre se ve completo y bien cuadrado, sin depender del tamaño de pantalla
+  // Esperamos un frame para que el navegador aplique estilos/fuentes antes de capturar
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+  return container;
+}
+
 async function exportCalendarAsImage() {
-  const wrapper = document.querySelector('.calendar-wrapper');
-  if (!wrapper) {
-    alert('No hay calendario para exportar.');
-    return;
-  }
   const ok = await ensureHtml2Canvas();
   if (!ok || typeof window.html2canvas !== 'function') {
     alert('No se puede exportar. No se cargó html2canvas.');
     return;
   }
+  let container;
   try {
-    const canvas = await window.html2canvas(wrapper, { backgroundColor: '#ffffff', scale: 2 });
+    container = await buildExportContainer();
+    const canvas = await window.html2canvas(container, { backgroundColor: '#fdfaf0', scale: 2, useCORS: true, width: container.scrollWidth, windowWidth: container.scrollWidth });
     const link = document.createElement('a');
     link.href = canvas.toDataURL('image/png');
     link.download = `horario-${Date.now()}.png`;
@@ -199,15 +441,12 @@ async function exportCalendarAsImage() {
   } catch (error) {
     console.error(error);
     alert('Error exportando imagen.');
+  } finally {
+    if (container) container.remove();
   }
 }
 
 async function exportCalendarAsPdf() {
-  const wrapper = document.querySelector('.calendar-wrapper');
-  if (!wrapper) {
-    alert('No hay calendario para exportar.');
-    return;
-  }
   const okCanvas = await ensureHtml2Canvas();
   const okPdf = await ensureJsPDF();
   const html2canvasFn = window.html2canvas;
@@ -220,23 +459,271 @@ async function exportCalendarAsPdf() {
     alert('No se puede exportar PDF: falta jsPDF.');
     return;
   }
+  let container;
   try {
-    const canvas = await html2canvasFn(wrapper, { backgroundColor: '#ffffff', scale: 2 });
+    container = await buildExportContainer();
+    const canvas = await html2canvasFn(container, { backgroundColor: '#fdfaf0', scale: 2, useCORS: true, width: container.scrollWidth, windowWidth: container.scrollWidth });
     const imgData = canvas.toDataURL('image/png');
+
     const pdf = new JsPdfClass('landscape', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pdfWidth;
-    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-    pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidthMm = pageWidth;
+    const imgHeightMm = (canvas.height * imgWidthMm) / canvas.width;
+
+    if (imgHeightMm <= pageHeight) {
+      // Cabe en una sola página: se centra verticalmente para que quede bien cuadrado
+      const offsetY = (pageHeight - imgHeightMm) / 2;
+      pdf.addImage(imgData, 'PNG', 0, offsetY, imgWidthMm, imgHeightMm);
+    } else {
+      // Contenido más alto que una página: lo dividimos en páginas sin cortar bloques a la mitad de forma abrupta
+      const pageHeightPx = (pageHeight * canvas.width) / imgWidthMm;
+      let renderedPx = 0;
+      let firstPage = true;
+      while (renderedPx < canvas.height) {
+        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeightPx;
+        const ctx = pageCanvas.getContext('2d');
+        ctx.fillStyle = '#fdfaf0';
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(canvas, 0, renderedPx, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+        const sliceImgData = pageCanvas.toDataURL('image/png');
+        const sliceHeightMm = (sliceHeightPx * imgWidthMm) / canvas.width;
+        if (!firstPage) pdf.addPage();
+        pdf.addImage(sliceImgData, 'PNG', 0, 0, imgWidthMm, sliceHeightMm);
+        firstPage = false;
+        renderedPx += sliceHeightPx;
+      }
+    }
     pdf.save(`horario-${Date.now()}.pdf`);
   } catch (error) {
     console.error(error);
     alert('Error exportando PDF.');
+  } finally {
+    if (container) container.remove();
   }
 }
 
+/* ============================================================
+   PERSISTENCIA LOCAL (evita que se borre todo al cambiar de app
+   en el celular) + SINCRONIZACIÓN EN LA NUBE (Firestore) para que
+   tus horarios se vean en cualquier dispositivo con tu correo.
+   Si Firebase no está configurado o no hay conexión, todo sigue
+   funcionando solo con este navegador (respaldo local).
+   ============================================================ */
+const AUTOSAVE_KEY = 'uni_horario_autosave_v1';
+const SAVED_KEY_PREFIX = 'uni_horarios_guardados_';
+let _cloudSyncTimer = null;
+
+function persistAutosave() {
+  try {
+    const especialidad = (especialidadSelect && especialidadSelect.value) || 's1';
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ loadedRows, scheduleBlocks, especialidad }));
+  } catch (e) {
+    console.warn('No se pudo autoguardar en este navegador:', e);
+  }
+  clearTimeout(_cloudSyncTimer);
+  _cloudSyncTimer = setTimeout(syncCurrentToCloud, 900);
+}
+
+function restoreAutosave() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.loadedRows)) loadedRows = data.loadedRows;
+    if (Array.isArray(data.scheduleBlocks)) scheduleBlocks = data.scheduleBlocks;
+    if (data.especialidad && especialidadSelect) especialidadSelect.value = data.especialidad;
+    return true;
+  } catch (e) {
+    console.warn('No se pudo restaurar el autoguardado:', e);
+    return false;
+  }
+}
+
+// Devuelve el usuario de Firebase (o null) esperando primero a que
+// Firebase termine de resolver la sesión persistida.
+async function currentFirebaseUser() {
+  if (typeof firebase === 'undefined' || !firebase.firestore || typeof window.firebaseAuthReady === 'undefined') return null;
+  try {
+    const user = await window.firebaseAuthReady;
+    return firebase.auth().currentUser || user || null;
+  } catch {
+    return null;
+  }
+}
+
+function usuarioDocRef(email) {
+  return firebase.firestore().collection('usuarios').doc(email.toLowerCase());
+}
+
+// Sube el horario que se está editando ahora mismo a la nube (silencioso, sin bloquear la UI)
+async function syncCurrentToCloud() {
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (!email) return;
+  const user = await currentFirebaseUser();
+  if (!user) return;
+  try {
+    await usuarioDocRef(email).set({
+      actual: scheduleBlocks,
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.warn('No se pudo sincronizar tu horario actual con la nube:', e);
+  }
+}
+
+// Trae el horario "en curso" desde la nube (para verlo igual en otro dispositivo)
+async function pullCurrentFromCloud() {
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (!email) return false;
+  const user = await currentFirebaseUser();
+  if (!user) return false;
+  try {
+    const doc = await usuarioDocRef(email).get();
+    const data = doc.exists ? doc.data() : null;
+    if (data && Array.isArray(data.actual) && data.actual.length) {
+      scheduleBlocks = data.actual;
+      return true;
+    }
+  } catch (e) {
+    console.warn('No se pudo traer tu horario desde la nube:', e);
+  }
+  return false;
+}
+
+async function getSavedSchedules() {
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (!email) return [];
+  const cacheKey = SAVED_KEY_PREFIX + email.toLowerCase();
+  const user = await currentFirebaseUser();
+  if (user) {
+    try {
+      const snap = await usuarioDocRef(email).collection('guardados').orderBy('fecha', 'desc').get();
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      localStorage.setItem(cacheKey, JSON.stringify(list)); // copia local por si luego no hay conexión
+      return list;
+    } catch (e) {
+      console.warn('No se pudo leer de la nube, mostrando la última copia guardada en este navegador:', e);
+    }
+  }
+  try { return JSON.parse(localStorage.getItem(cacheKey) || '[]'); } catch { return []; }
+}
+
+async function saveCurrentSchedule(nombre) {
+  if (!scheduleBlocks.length) { alert('No hay bloques en tu horario para guardar.'); return; }
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (!email) { alert('Inicia sesión con tu cuenta autorizada para guardar tu horario.'); return; }
+
+  const entry = {
+    nombre: (nombre && nombre.trim()) || `Horario ${new Date().toLocaleDateString('es-PE')}`,
+    fecha: new Date().toISOString(),
+    scheduleBlocks: JSON.parse(JSON.stringify(scheduleBlocks))
+  };
+
+  const user = await currentFirebaseUser();
+  if (user) {
+    try {
+      await usuarioDocRef(email).collection('guardados').add(entry);
+      await renderSavedSchedulesList();
+      return;
+    } catch (e) {
+      console.warn('No se pudo guardar en la nube, se guardó solo en este navegador:', e);
+    }
+  }
+  const cacheKey = SAVED_KEY_PREFIX + email.toLowerCase();
+  const list = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+  list.unshift({ id: Date.now().toString(36), ...entry });
+  localStorage.setItem(cacheKey, JSON.stringify(list));
+  renderSavedSchedulesList();
+}
+
+async function loadSavedSchedule(id) {
+  const list = await getSavedSchedules();
+  const entry = list.find(e => e.id === id);
+  if (!entry) return;
+  scheduleBlocks = JSON.parse(JSON.stringify(entry.scheduleBlocks));
+  renderSchedule(); // esto también sube el cambio a la nube vía persistAutosave
+}
+
+async function deleteSavedSchedule(id) {
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (!email) return;
+  const user = await currentFirebaseUser();
+  if (user) {
+    try {
+      await usuarioDocRef(email).collection('guardados').doc(id).delete();
+      await renderSavedSchedulesList();
+      return;
+    } catch (e) {
+      console.warn('No se pudo eliminar en la nube:', e);
+    }
+  }
+  const cacheKey = SAVED_KEY_PREFIX + email.toLowerCase();
+  const list = JSON.parse(localStorage.getItem(cacheKey) || '[]').filter(e => e.id !== id);
+  localStorage.setItem(cacheKey, JSON.stringify(list));
+  renderSavedSchedulesList();
+}
+
+async function renderSavedSchedulesList() {
+  const el = document.getElementById('savedSchedulesList');
+  const emailEl = document.getElementById('savedForEmail');
+  const email = (typeof getCurrentUserEmail === 'function') ? getCurrentUserEmail() : null;
+  if (emailEl) emailEl.textContent = email || 'inicia sesión';
+  if (!el) return;
+
+  if (!email) {
+    el.innerHTML = '<p class="hint">Inicia sesión para ver y guardar tus horarios.</p>';
+    return;
+  }
+
+  el.innerHTML = '<p class="hint">Cargando horarios guardados…</p>';
+  const list = await getSavedSchedules();
+  if (!list.length) {
+    el.innerHTML = '<p class="hint">Aún no tienes horarios guardados.</p>';
+    return;
+  }
+
+  el.innerHTML = list.map(e => `
+    <div class="saved-item">
+      <div class="saved-item-info">
+        <div class="saved-item-name">${e.nombre}</div>
+        <div class="saved-item-date">${new Date(e.fecha).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+      </div>
+      <div class="saved-item-actions">
+        <button data-load="${e.id}" class="ghost">Cargar</button>
+        <button data-delete="${e.id}" class="danger">✕</button>
+      </div>
+    </div>`).join('');
+
+  el.querySelectorAll('button[data-load]').forEach(btn => {
+    btn.addEventListener('click', () => loadSavedSchedule(btn.dataset.load));
+  });
+  el.querySelectorAll('button[data-delete]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('¿Eliminar este horario guardado? Esta acción no se puede deshacer.')) deleteSavedSchedule(btn.dataset.delete);
+    });
+  });
+}
+
+// Se llama desde auth.js apenas se confirma la sesión (existente o nueva)
+window.onAuthReady = async function () {
+  const huboRemoto = await pullCurrentFromCloud();
+  if (huboRemoto) {
+    renderSchedule(); // usamos el horario que ya estaba en la nube (de otro dispositivo)
+  } else if (scheduleBlocks.length) {
+    syncCurrentToCloud(); // no había nada en la nube todavía: subimos lo que teníamos local
+  }
+  renderSavedSchedulesList();
+};
+
 function renderCalendar() {
+  renderCalendarInto(calendarGrid);
+}
+
+function renderCalendarInto(targetGrid, widthOverride) {
   const days = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const startHour = 7;
   const endHour = 22;
@@ -249,11 +736,12 @@ function renderCalendar() {
     const next = `${(startHour + row + 1).toString().padStart(2,'0')}:00`;
     html += `<div class="hour">${h} a ${next}</div>` + days.map(() => '<div class="cell"></div>').join('');
   });
-  calendarGrid.innerHTML = html;
+  targetGrid.innerHTML = html;
 
-  const rect = calendarGrid.getBoundingClientRect();
+  const rect = targetGrid.getBoundingClientRect();
   const hourColumnWidth = 100;
-  const dayWidth = Math.max((rect.width - hourColumnWidth) / 6, 90);
+  const availableWidth = widthOverride || rect.width;
+  const dayWidth = Math.max((availableWidth - hourColumnWidth) / 6, 90);
   const totalMinutes = (endHour - startHour) * 60;
 
   const dayMap = {lu:0,ma:1,mi:2,mie:2,ju:3,vi:4,sa:5,sab:5};
@@ -321,7 +809,8 @@ function renderCalendar() {
         const widthPx = colWidth - 4;
 
         const chip = document.createElement('div');
-        chip.className = 'block-chip ' + (event.tipo === 'practica' ? 'practica' : event.tipo === 'otro' ? 'otro' : 'teoria');
+        const tipoClass = event.tipo === 'practica' ? 'practica' : event.tipo === 'laboratorio' ? 'laboratorio' : event.tipo === 'otro' ? 'otro' : 'teoria';
+        chip.className = 'block-chip ' + tipoClass;
         chip.style.position = 'absolute';
         chip.style.top = `${topPx}px`;
         chip.style.left = `${leftPos}px`;
@@ -336,7 +825,7 @@ function renderCalendar() {
         chip.title = `${event.curso} — Sección ${event.seccion}\n${event.horario}\n${event.aula || 'sin aula'}\n${event.docente || ''}`;
         chip.addEventListener('mouseenter', () => { chip.style.zIndex = '10'; });
         chip.addEventListener('mouseleave', () => { chip.style.zIndex = '1'; });
-        calendarGrid.appendChild(chip);
+        targetGrid.appendChild(chip);
       });
     });
   });
@@ -350,6 +839,7 @@ function renderSchedule() {
 
   if (!scheduleBlocks.length) {
     blocksList.innerHTML = '<p class="hint">Aún no hay bloques seleccionados.</p>';
+    persistAutosave();
     return;
   }
 
@@ -389,7 +879,7 @@ function renderSchedule() {
       <td class="col-curso">${c.curso}</td>
       <td>${c.seccion}</td>
       <td class="col-mono">${c.creditos}</td>
-      <td class="col-mono">${c.ciclo || '—'}</td>
+      <td class="col-mono">${formatCiclo(c.ciclo)}</td>
       <td>
         <div class="horario-cell">
           ${c.horarios.map(h => `
@@ -421,6 +911,8 @@ function renderSchedule() {
       renderSchedule();
     });
   });
+
+  persistAutosave();
 }
 function renderPreview() {
   if (!loadedRows.length) { tablePreview.innerHTML = '<p class="hint">No hay datos cargados.</p>'; return; }
@@ -435,22 +927,55 @@ fileInput.addEventListener('change', e => {
   if (!file) return;
   const fileLabelText = document.getElementById('fileLabelText');
   if (fileLabelText) fileLabelText.textContent = file.name;
-  const r = new FileReader();
-  r.onload = () => { loadedRows = parseHTMLTable(r.result); if (!loadedRows.length) { alert('No se encontraron datos válidos.'); return; } buildSectionMap(loadedRows); updateCourseSelect(); renderPreview(); scheduleBlocks=[]; renderSchedule(); renderCalendar(); };
-  r.readAsText(file);
+  handleExcelFile(file).catch(err => {
+    console.error(err);
+    alert('No se pudo leer ese archivo Excel. Revisa que sea el formato de HORARIOS_XX-X.xlsx con hojas "s1", "s2" y "s3".');
+  });
 });
 
 loadExample.addEventListener('click', () => {
-  const html = '<table><tr><th>Cod</th><th>Secc</th><th>Curso</th><th>Tipo</th><th>Horario</th><th>Aula</th><th>Docente</th></tr><tr><td>AA215</td><td>E</td><td>GEOLOGIA</td><td>TEORIA</td><td>MA 10-12</td><td>D2-351</td><td>ROJAS LEON</td></tr><tr><td>AA215</td><td>E</td><td>GEOLOGIA</td><td>PRACTICA</td><td>MA 12-14</td><td>D2-351</td><td>ROJAS LEON</td></tr></table>';
-  loadedRows = parseHTMLTable(html); buildSectionMap(loadedRows); updateCourseSelect(); renderPreview(); scheduleBlocks=[]; renderSchedule(); renderCalendar();
+  loadedRows = [
+    { codigo: 'AA215', curso: 'GEOLOGÍA', docente: 'ROJAS LEON', seccion: 'E', horario: 'MA 10-12', tipo: 'teoria', aula: 'sin aula', creditosDirectos: 3, cicloDirecto: 1 },
+    { codigo: 'AA215', curso: 'GEOLOGÍA', docente: 'ROJAS LEON', seccion: 'E', horario: 'MA 12-14', tipo: 'practica', aula: 'sin aula', creditosDirectos: 3, cicloDirecto: 1 }
+  ];
+  buildSectionMap(loadedRows); updateCourseSelect(); renderPreview(); scheduleBlocks=[]; renderSchedule(); renderCalendar(); persistAutosave();
 });
+
+if (especialidadSelect) {
+  especialidadSelect.addEventListener('change', () => {
+    if (lastWorkbook) {
+      loadFromWorkbook();
+    } else {
+      persistAutosave();
+    }
+  });
+}
 
 courseSelect.addEventListener('change', updateSectionSelect);
 sectionSelect.addEventListener('change', showSectionHorario);
 addBlock.addEventListener('click', addBlockHandler);
 downloadImageBtn.addEventListener('click', exportCalendarAsImage);
 downloadPdfBtn.addEventListener('click', exportCalendarAsPdf);
-clearBtn.addEventListener('click', () => { scheduleBlocks=[]; renderSchedule(); });
+clearBtn.addEventListener('click', () => {
+  if (scheduleBlocks.length && !confirm('¿Vaciar todo tu horario actual? Puedes guardarlo antes si quieres conservarlo.')) return;
+  scheduleBlocks=[];
+  renderSchedule();
+});
 
+const saveScheduleBtn = document.getElementById('saveScheduleBtn');
+if (saveScheduleBtn) {
+  saveScheduleBtn.addEventListener('click', () => {
+    const nameInput = document.getElementById('saveNameInput');
+    saveCurrentSchedule(nameInput ? nameInput.value : '');
+    if (nameInput) nameInput.value = '';
+  });
+}
+
+// Restauramos lo que había en este navegador (evita perder todo si el
+// celular recarga la página al cambiar de app) y luego pintamos todo.
+restoreAutosave();
+if (loadedRows.length) { buildSectionMap(loadedRows); updateCourseSelect(); }
 renderPreview();
-renderSchedule();renderCalendar();
+renderSchedule();
+renderCalendar();
+renderSavedSchedulesList();

@@ -9,6 +9,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 <script src="https://accounts.google.com/gsi/client" async defer onerror="window.__gsiLoadFailed = true;"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -40,12 +43,18 @@
 
   <div class="card">
     <h2><span class="eyebrow">01</span> Cargar oferta académica</h2>
-    <label class="file-label" for="fileInput">
-      <input id="fileInput" type="file" accept="text/html" />
-      <span id="fileLabelText">Elegir archivo HTML…</span>
+    <label>Especialidad</label>
+    <select id="especialidadSelect">
+      <option value="s1">S1 · Ingeniería Sanitaria</option>
+      <option value="s2">S2 · Higiene y Seguridad Industrial</option>
+      <option value="s3">S3 · Ingeniería Ambiental</option>
+    </select>
+    <label class="file-label" for="fileInput" style="margin-top:.75rem;">
+      <input id="fileInput" type="file" accept=".xlsx,.xls" />
+      <span id="fileLabelText">Elegir archivo Excel (.xlsx)…</span>
     </label>
     <button id="loadExample" class="ghost">Usar ejemplo de muestra</button>
-    <p class="hint">Extrae Curso, Docente, Horario y Sección automáticamente.</p>
+    <p class="hint">Sube el Excel de horarios (hojas "s1", "s2", "s3"). Elige tu especialidad y se lee automáticamente esa hoja.</p>
   </div>
 
   <div class="card">
@@ -61,6 +70,15 @@
       <button id="downloadPdfBtn" class="ghost">PDF</button>
     </div>
     <button id="clearBtn" class="danger">Limpiar horario</button>
+  </div>
+
+  <div class="card">
+    <h2><span class="eyebrow">03</span> Guardar horario</h2>
+    <label>Nombre (opcional)</label>
+    <input id="saveNameInput" type="text" placeholder="Ej: Horario Ciclo 2026-1" />
+    <button id="saveScheduleBtn">Guardar horario actual</button>
+    <p class="hint">Guardado con la cuenta <strong id="savedForEmail">—</strong> en este navegador.</p>
+    <div id="savedSchedulesList" class="saved-list"></div>
   </div>
 </aside>
 
@@ -91,6 +109,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha512-BNa5KT2Om7oFOJ677yRKPvIqwF38dK1+rLC0PZx0IAf63i3dN1E+GnoQIyM90vt+SR5KQaT4JkQq8Xh2Lcn9IA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-xg1z2Q4Z6WjSa7f6v9Yk7k+4F/ihz8r0Mg+YkFPueJ6oW4xG60Ejru7rCq4ykPoU2q0Cv4zICXOMFzxeOK2WZA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="firebase-config.js"></script>
 <script src="auth.js"></script>
 <script src="catalog.js"></script>
 <script src="script2.js"></script>

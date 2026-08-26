@@ -558,3 +558,63 @@ tr:hover td{background:var(--surface-soft);}
   flex-shrink:0;
 }
 .user-badge button:hover{background:rgba(156,68,54,.15);}
+
+/* ============ HORARIOS GUARDADOS ============ */
+.saved-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.75rem;max-height:240px;overflow-y:auto;padding-right:2px;}
+.saved-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(228,207,160,.16);
+  border-radius:var(--radius-sm);
+  padding:.5rem .6rem;
+  gap:.5rem;
+}
+.saved-item-info{min-width:0;}
+.saved-item-name{
+  font-family:var(--font-display);
+  font-weight:600;
+  font-size:.82rem;
+  color:#f4efe2;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.saved-item-date{font-size:.65rem;color:#a9b2c9;margin-top:.15rem;}
+.card .saved-list .saved-item-actions{display:flex;gap:.35rem;flex-shrink:0;}
+.card .saved-list .saved-item-actions button{width:auto;margin:0;padding:.3rem .55rem;font-size:.68rem;}
+
+/* ============ CONTENEDOR DE EXPORTACIÓN (imagen / PDF) ============ */
+.export-root{padding:28px;font-family:var(--font-body);}
+.export-title-row{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  margin-bottom:20px;
+  padding-bottom:16px;
+  border-bottom:2px solid var(--gold-dim);
+}
+.export-logo{width:64px;height:64px;object-fit:contain;flex-shrink:0;}
+.export-title-row h2{font-family:var(--font-display);font-weight:600;font-size:1.5rem;color:var(--navy);margin:0 0 4px;}
+.export-title-row span{font-family:var(--font-mono);font-size:.82rem;color:var(--muted);}
+.export-calendar-wrapper{height:auto !important;max-height:none !important;overflow:visible !important;box-shadow:none;}
+.export-blocks-card{
+  margin-top:24px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:1.2rem 1.3rem 1.4rem;
+}
+.export-blocks-card h2{
+  font-family:var(--font-display);
+  font-weight:600;
+  font-size:1.15rem;
+  color:var(--ink);
+  margin-bottom:.9rem;
+  padding-bottom:.6rem;
+  border-bottom:1px solid var(--border);
+}
+.export-blocks-card .row-remove{display:none;}
+.export-blocks-card thead th:last-child{display:none;}
+.export-blocks-card tbody td:last-child{display:none;}

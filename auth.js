@@ -26,6 +26,16 @@ const AUTH_CONFIG = {
   sessionHours: 24 // cuánto tiempo se recuerda la sesión en este navegador
 };
 
+/* Promesa que se resuelve cuando Firebase Auth ya determinó si hay
+   una sesión activa (o null si Firebase no está configurado/disponible). */
+let _resolveFirebaseAuthReady;
+window.firebaseAuthReady = new Promise(resolve => { _resolveFirebaseAuthReady = resolve; });
+if (typeof firebase !== 'undefined' && firebase.auth) {
+  firebase.auth().onAuthStateChanged(user => { _resolveFirebaseAuthReady(user); });
+} else {
+  _resolveFirebaseAuthReady(null);
+}
+
 function parseJwt(token) {
   const base64Url = token.split('.')[1];
   const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -83,15 +93,25 @@ function renderUserBadge(name, picture, email) {
   document.getElementById('logoutBtn').addEventListener('click', logout);
 }
 
+function getCurrentUserEmail() {
+  const s = getStoredSession();
+  return s ? s.email : null;
+}
+
 function grantAccess(email, name, picture) {
   storeSession(email, name, picture);
   removeOverlay();
   renderUserBadge(name, picture, email);
+  if (typeof window.onAuthReady === 'function') window.onAuthReady(email);
 }
 
 function logout() {
   localStorage.removeItem('uni_auth_session');
-  location.reload();
+  if (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) {
+    firebase.auth().signOut().finally(() => location.reload());
+  } else {
+    location.reload();
+  }
 }
 
 function showDenied(email) {
@@ -112,11 +132,24 @@ function showDenied(email) {
   }
 }
 
+function signInToFirebase(idToken) {
+  if (typeof firebase === 'undefined' || !firebase.auth || !firebase.auth.GoogleAuthProvider) {
+    return Promise.resolve(null); // Firebase no configurado todavía: seguimos sin nube
+  }
+  const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+  return firebase.auth().signInWithCredential(credential).catch(err => {
+    console.warn('No se pudo conectar con la nube (Firebase). El horario funcionará solo en este navegador:', err);
+    return null;
+  });
+}
+
 function handleCredentialResponse(response) {
   try {
     const payload = parseJwt(response.credential);
     if (payload.email_verified && isAllowedEmail(payload.email)) {
-      grantAccess(payload.email, payload.name, payload.picture);
+      signInToFirebase(response.credential).finally(() => {
+        grantAccess(payload.email, payload.name, payload.picture);
+      });
     } else {
       showDenied(payload.email);
     }
@@ -132,6 +165,7 @@ function initAuth() {
   if (existing) {
     removeOverlay();
     renderUserBadge(existing.name, existing.picture, existing.email);
+    if (typeof window.onAuthReady === 'function') window.onAuthReady(existing.email);
     return;
   }
 
