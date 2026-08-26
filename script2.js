@@ -226,15 +226,38 @@ function parseWorkbookForEspecialidad(workbook, especialidad) {
   return parseSheetS1(rows);
 }
 
+let parsedBySheet = { s1: [], s2: [], s3: [] }; // filas de cada hoja, por separado
+let courseSpecialties = {}; // curso -> Set('s1','s2','s3') en qué carreras aparece
+let courseCiclo = {}; // curso -> { s1: ciclo, s2: ciclo, s3: ciclo }
+
 function loadFromWorkbook() {
   if (!lastWorkbook) return;
-  const especialidad = (especialidadSelect && especialidadSelect.value) || 's1';
-  const parsed = parseWorkbookForEspecialidad(lastWorkbook, especialidad);
-  if (!parsed.length) {
-    alert('No se pudo leer información de la hoja "' + especialidad.toUpperCase() + '" en ese archivo. Revisa que el Excel tenga el mismo formato de HORARIOS_XX-X.xlsx.');
+  const especialidades = ['s1', 's2', 's3'];
+
+  parsedBySheet = {};
+  especialidades.forEach(esp => { parsedBySheet[esp] = parseWorkbookForEspecialidad(lastWorkbook, esp); });
+
+  // Unimos las 3 hojas: cualquier sección de cualquier carrera es matriculable por cualquiera
+  loadedRows = dedupeRows([].concat(parsedBySheet.s1, parsedBySheet.s2, parsedBySheet.s3));
+
+  if (!loadedRows.length) {
+    alert('No se pudo leer información de ese archivo. Revisa que tenga el mismo formato de HORARIOS_XX-X.xlsx (hojas "s1", "s2", "s3").');
     return;
   }
-  loadedRows = parsed;
+
+  // El selector de especialidad solo sirve para saber qué cursos pertenecen a cada carrera
+  courseSpecialties = {};
+  courseCiclo = {};
+  especialidades.forEach(esp => {
+    parsedBySheet[esp].forEach(r => {
+      if (!courseSpecialties[r.curso]) courseSpecialties[r.curso] = new Set();
+      courseSpecialties[r.curso].add(esp);
+      if (!courseCiclo[r.curso]) courseCiclo[r.curso] = {};
+      if (courseCiclo[r.curso][esp] == null && r.cicloDirecto != null) courseCiclo[r.curso][esp] = r.cicloDirecto;
+    });
+  });
+
+  // sectionMap se arma con TODAS las secciones juntas (de las 3 carreras)
   buildSectionMap(loadedRows);
   updateCourseSelect();
   renderPreview();
@@ -288,9 +311,42 @@ function buildSectionMap(rows) {
   });
 }
 
+// Ciclo a usar para un curso dentro de una especialidad (si no aparece en esa
+// especialidad puntual, usamos el ciclo más bajo que tenga en cualquier otra).
+function getCicloForCourse(curso, especialidad) {
+  const porCarrera = courseCiclo[curso];
+  if (!porCarrera) return null;
+  if (porCarrera[especialidad] != null) return porCarrera[especialidad];
+  const valores = Object.values(porCarrera).filter(v => v != null && v !== 'ELECTIVO');
+  if (valores.length) return Math.min(...valores);
+  const tieneElectivo = Object.values(porCarrera).some(v => v === 'ELECTIVO');
+  return tieneElectivo ? 'ELECTIVO' : null;
+}
+
 function updateCourseSelect() {
-  const courses = [...new Set(loadedRows.map(r => r.curso))].sort((a,b) => a.localeCompare(b,'es',{numeric:true}));
-  courseSelect.innerHTML = '<option value="">-- seleccione curso --</option>' + courses.map(c => `<option value="${c}">${c}</option>`).join('');
+  const especialidad = (especialidadSelect && especialidadSelect.value) || 's1';
+  let courses = [...new Set(loadedRows.map(r => r.curso))];
+
+  // El selector de especialidad filtra: solo cursos que pertenecen a esa carrera
+  if (Object.keys(courseSpecialties).length) {
+    courses = courses.filter(c => !courseSpecialties[c] || courseSpecialties[c].has(especialidad));
+  }
+
+  // Orden por ciclo (Electivos al final), luego alfabético
+  courses.sort((a, b) => {
+    const ca = getCicloForCourse(a, especialidad);
+    const cb = getCicloForCourse(b, especialidad);
+    const na = ca === 'ELECTIVO' ? 99 : (ca ?? 999);
+    const nb = cb === 'ELECTIVO' ? 99 : (cb ?? 999);
+    if (na !== nb) return na - nb;
+    return a.localeCompare(b, 'es', { numeric: true });
+  });
+
+  courseSelect.innerHTML = '<option value="">-- seleccione curso --</option>' + courses.map(c => {
+    const ciclo = getCicloForCourse(c, especialidad);
+    const cicloLabel = ciclo ? `Ciclo ${formatCiclo(ciclo)} · ` : '';
+    return `<option value="${c}">${cicloLabel}${c}</option>`;
+  }).join('');
   sectionSelect.innerHTML = '<option value="">-- primero selecciona curso --</option>';
   sectionTimes.textContent = 'Selecciona sección.';
 }
@@ -520,7 +576,9 @@ let _cloudSyncTimer = null;
 function persistAutosave() {
   try {
     const especialidad = (especialidadSelect && especialidadSelect.value) || 's1';
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ loadedRows, scheduleBlocks, especialidad }));
+    const courseSpecialtiesArr = {};
+    Object.keys(courseSpecialties).forEach(c => { courseSpecialtiesArr[c] = [...courseSpecialties[c]]; });
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ loadedRows, scheduleBlocks, especialidad, courseSpecialties: courseSpecialtiesArr, courseCiclo }));
   } catch (e) {
     console.warn('No se pudo autoguardar en este navegador:', e);
   }
@@ -536,6 +594,11 @@ function restoreAutosave() {
     if (Array.isArray(data.loadedRows)) loadedRows = data.loadedRows;
     if (Array.isArray(data.scheduleBlocks)) scheduleBlocks = data.scheduleBlocks;
     if (data.especialidad && especialidadSelect) especialidadSelect.value = data.especialidad;
+    if (data.courseSpecialties) {
+      courseSpecialties = {};
+      Object.keys(data.courseSpecialties).forEach(c => { courseSpecialties[c] = new Set(data.courseSpecialties[c]); });
+    }
+    if (data.courseCiclo) courseCiclo = data.courseCiclo;
     return true;
   } catch (e) {
     console.warn('No se pudo restaurar el autoguardado:', e);
@@ -938,16 +1001,16 @@ loadExample.addEventListener('click', () => {
     { codigo: 'AA215', curso: 'GEOLOGÍA', docente: 'ROJAS LEON', seccion: 'E', horario: 'MA 10-12', tipo: 'teoria', aula: 'sin aula', creditosDirectos: 3, cicloDirecto: 1 },
     { codigo: 'AA215', curso: 'GEOLOGÍA', docente: 'ROJAS LEON', seccion: 'E', horario: 'MA 12-14', tipo: 'practica', aula: 'sin aula', creditosDirectos: 3, cicloDirecto: 1 }
   ];
+  courseSpecialties = { 'GEOLOGÍA': new Set(['s1']) };
+  courseCiclo = { 'GEOLOGÍA': { s1: 1 } };
   buildSectionMap(loadedRows); updateCourseSelect(); renderPreview(); scheduleBlocks=[]; renderSchedule(); renderCalendar(); persistAutosave();
 });
 
 if (especialidadSelect) {
   especialidadSelect.addEventListener('change', () => {
-    if (lastWorkbook) {
-      loadFromWorkbook();
-    } else {
-      persistAutosave();
-    }
+    // No hace falta re-leer el Excel: solo cambiamos qué cursos se muestran y su orden
+    if (loadedRows.length) updateCourseSelect();
+    persistAutosave();
   });
 }
 
